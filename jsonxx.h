@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cassert>
 #include <iostream>
 #include <map>
@@ -46,6 +47,7 @@ enum Settings {
   Strict = false,
   // values
   Parser = Permissive,  // permissive or strict parsing
+  UnquotedKeys = Disabled, // support of unquoted keys
   Assertions = Enabled  // enabled or disabled assertions (these asserts work both in DEBUG and RELEASE builds)
 };
 
@@ -67,9 +69,17 @@ class Value;
 class Object;
 class Array;
 
+// Identity meta-function
+template <typename T>
+struct identity {
+  typedef T type;
+};
+
 // Tools
 bool validate( const std::string &input );
 bool validate( std::istream &input );
+std::string reformat( const std::string &input );
+std::string reformat( std::istream &input );
 std::string xml( const std::string &input, unsigned format = JSONx );
 std::string xml( std::istream &input, unsigned format = JSONx );
 
@@ -91,6 +101,9 @@ class Object {
   T& get(const std::string& key);
   template <typename T>
   const T& get(const std::string& key) const;
+
+  template <typename T>
+  const T& get(const std::string& key, const typename identity<T>::type& default_value) const;
 
   size_t size() const;
   bool empty() const;
@@ -140,6 +153,9 @@ class Array {
   template <typename T>
   const T& get(unsigned int i) const;
 
+  template <typename T>
+  const T& get(unsigned int i, const typename identity<T>::type& default_value) const;
+
   const std::vector<Value*>& values() const {
     return values_;
   }
@@ -174,7 +190,7 @@ class Value {
   void reset();
 
   template<typename T>
-  void import( const T &t ) {
+  void import( const T & ) {
     reset();
     type_ = INVALID_;
     // debug
@@ -189,7 +205,7 @@ class Value {
   void import( const TYPE &n ) { \
     reset(); \
     type_ = NUMBER_; \
-    number_value_ = n; \
+    number_value_ = static_cast<long double>(n); \
   }
   $number( char )
   $number( int )
@@ -204,12 +220,12 @@ class Value {
   $number( long double )
 #undef $number
 #if JSONXX_COMPILER_HAS_CXX11 > 0
-  void import( const std::nullptr_t &t ) {
+  void import( const std::nullptr_t & ) {
     reset();
     type_ = NULL_;
   }
 #endif
-  void import( const Null &t ) {
+  void import( const Null & ) {
     reset();
     type_ = NULL_;
   }
@@ -332,6 +348,16 @@ const T& Array::get(unsigned int i) const {
 }
 
 template <typename T>
+const T& Array::get(unsigned int i, const typename identity<T>::type& default_value) const {
+  if(has<T>(i)) {
+    const Value* v = values_.at(i);
+    return v->get<T>();
+  } else {
+    return default_value;
+  }
+}
+
+template <typename T>
 bool Object::has(const std::string& key) const {
   container::const_iterator it(value_map_.find(key));
   return it != value_map_.end() && it->second->is<T>();
@@ -347,6 +373,20 @@ template <typename T>
 const T& Object::get(const std::string& key) const {
   JSONXX_ASSERT(has<T>(key));
   return value_map_.find(key)->second->get<T>();
+}
+
+template <typename T>
+const T& Object::get(const std::string& key, const typename identity<T>::type& default_value) const {
+  if (has<T>(key)) {
+    return value_map_.find(key)->second->get<T>();
+  } else {
+    return default_value;
+  }
+}
+    
+template<>
+inline bool Value::is<Value>() const {
+    return true;
 }
 
 template<>
@@ -377,6 +417,16 @@ inline bool Value::is<Array>() const {
 template<>
 inline bool Value::is<Object>() const {
   return type_ == OBJECT_;
+}
+    
+template<>
+inline Value& Value::get<Value>() {
+    return *this;
+}
+    
+template<>
+inline const Value& Value::get<Value>() const {
+    return *this;
 }
 
 template<>

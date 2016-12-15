@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 #include <iostream>
+#include <fstream>
 
 #include "jsonxx.h"
 
@@ -52,7 +53,7 @@ int main(int argc, const char **argv) {
         TEST(parse_string(input, value));
         TEST(value == "field1");
     }
-    if( !Strict )
+    if( Parser != Strict )
     {
         string teststr("'field1'");
         string value;
@@ -67,7 +68,7 @@ int main(int argc, const char **argv) {
         TEST(parse_string(input, value));
         TEST(value == "  field1");
     }
-    if( !Strict )
+    if( Parser != Strict )
     {
         string teststr("'  field1'");
         string value;
@@ -82,7 +83,7 @@ int main(int argc, const char **argv) {
         TEST(parse_string(input, value));
         TEST(value == "field1");
     }
-    if( !Strict )
+    if( Parser != Strict )
     {
         string teststr("  'field1'");
         string value;
@@ -92,7 +93,7 @@ int main(int argc, const char **argv) {
     }
     {
         // 'escaped text to unescaped text' test
-        string teststr("\"\\b\\f\\n\\r\\t\\u0014\\u0002\"");
+        string teststr("\"\\b\\f\\n\\r\\t\\u000e\\u0002\"");
         string value;
         istringstream input(teststr);
         TEST(parse_string(input, value));
@@ -112,6 +113,9 @@ int main(int argc, const char **argv) {
     }
     {
         string teststr("{ \"field1\" : 6 }");
+        if(UnquotedKeys == Enabled) {
+            teststr = "{ field1 : 6 }";
+        }
         istringstream input(teststr);
         Object o;
         TEST(o.parse(input));
@@ -187,7 +191,7 @@ int main(int argc, const char **argv) {
         stream << v;
         TEST(stream.str() == "\"field1\"");
     }
-    if( !Strict )
+    if( Parser != Strict )
     {
         string teststr("'field1'");
         istringstream input(teststr);
@@ -218,7 +222,16 @@ int main(int argc, const char **argv) {
                 "  \"person\" : {\"name\" : \"GWB\", \"age\" : 60},"
                 "  \"data\": [\"abcd\", 42, 54.7]"
                 "}"
-                       );
+                );
+        if(UnquotedKeys == Enabled) {
+            teststr = 
+                    "{"
+                    "  foo : 1,"
+                    "  bar : false,"
+                    "  person : {name : \"GWB\", age : 60},"
+                    "  data: [\"abcd\", 42, 54.7]"
+                    "}";
+        }
         istringstream input(teststr);
         Object o;
         TEST(o.parse(input));
@@ -230,16 +243,21 @@ int main(int argc, const char **argv) {
         TEST(o.get<Array>("data").get<Number>(1) == 42);
         TEST(o.get<Array>("data").get<String>(0) == "abcd");
         TEST(o.get<Array>("data").get<Number>(2) - 54.7 < 1e-6 ||
-             - o.get<Array>("data").get<Number>(2) + 54.7 < 1e-6 );
+                - o.get<Array>("data").get<Number>(2) + 54.7 < 1e-6 );
         TEST(!o.has<Number>("data"));
     }
     {
         string teststr("{\"bar\": \"a\\rb\\nc\\td\", \"foo\": true}");
+        if(UnquotedKeys == Enabled) {
+            teststr = "{bar: \"a\\rb\\nc\\td\", foo: true}";
+        }
         istringstream input(teststr);
         Object o;
         TEST(o.parse(input));
         TEST(o.has<String>("bar"));
         TEST(o.get<String>("bar") == "a\rb\nc\td");
+        TEST(o.has<Boolean>("foo"));
+        TEST(o.get<Boolean>("foo") == true);
     }
     {
         string teststr("[ ]");
@@ -259,6 +277,9 @@ int main(int argc, const char **argv) {
 
     {
         string teststr("{\"attrs\":{}}");
+        if(UnquotedKeys == Enabled) {
+            teststr = "{attrs:{}}";
+        }
         istringstream input(teststr);
         Object o;
         TEST(o.parse(input));
@@ -276,6 +297,19 @@ int main(int argc, const char **argv) {
                        "4ef0c00cbdff9ac8.json\",\"country_code\":\"NL\","
                        "\"id\":\"4ef0c00cbdff9ac8\","
                        "\"country\":\"The Netherlands\"}}");
+        if(UnquotedKeys == Enabled) {
+            teststr = "{place:{full_name:\"Limburg, The Netherlands\""
+                           ",attributes:{},name:\"Limburg\","
+                           "place_type:\"admin\",bounding_box:{"
+                           "type:\"Polygon\",coordinates:"
+                           "[[[5.5661376,50.750449],[6.2268848,50.750449],"
+                           "[6.2268848,51.7784841],[5.5661376,51.7784841]]]},"
+                           "url:\"http:\\/\\/api.twitter.com\\/1\\/geo\\/id\\/"
+                           "4ef0c00cbdff9ac8.json\",country_code:\"NL\","
+                           "id:\"4ef0c00cbdff9ac8\","
+                           "country:\"The Netherlands\"}}";
+        }
+
         istringstream input(teststr);
         Object o;
         TEST(o.parse(input));
@@ -283,7 +317,31 @@ int main(int argc, const char **argv) {
         TEST(o.get<Object>("place").has<Object>("attributes"));
     }
 
-    if( !Strict )
+
+    {
+        string teststr("{\"file\": \"test.txt\", \"types\": {\"one\": 1, \"two\": 2},"
+                       "\"list\": [\"string\", 10]}");
+        if(UnquotedKeys == Enabled) {
+            teststr = "{file: \"test.txt\", types: {one: 1, two: 2},"
+                           "list: [\"string\", 10]}";
+        }
+        istringstream input(teststr);
+        Object o;
+        TEST(o.parse(input));
+        TEST(o.has<String>("file"));
+        TEST(o.has<Object>("types"));
+        TEST(o.get<String>("file", "lol.txt") == "test.txt");
+        TEST(o.get<Object>("types").has<Number>("one"));
+        TEST(!o.get<Object>("types").has<Number>("three"));
+        TEST(o.get<Object>("types").get<Number>("three", 3) == 3);
+        TEST(o.has<Array>("list"));
+        TEST(o.get<Array>("list").has<String>(0));
+        TEST(!o.get<Array>("list").has<String>(2));
+        TEST(o.get<Array>("list").get<String>(0) == "string");
+        TEST(o.get<Array>("list").get<String>(2, "test") == "test");
+    }
+
+    if( Parser != Strict && UnquotedKeys == Disabled /* '/' not supported as an identifier */ ) 
     {
         #define QUOTE(...) #__VA_ARGS__
         string input = QUOTE(
@@ -346,6 +404,11 @@ int main(int argc, const char **argv) {
         TEST( jsonxx::validate(input) );
     }
 
+    if(UnquotedKeys == Enabled) {
+        cout << "Some of tests with 'UnquotedKeys = Enabled' ok." << endl;
+        return 0;
+    }
+
     // Four samples from www.json.org
     TEST_OBJECT( {
         "name": "Jack (\"Bee\") Nimble",
@@ -384,7 +447,7 @@ int main(int argc, const char **argv) {
 
     // UTF-8
     TEST_OBJECT( {"text":"は 2010/11/4 at 5:50 AM に 6'45\"/km のペースで 8.42 km を走りました http://go.nike.com/9rlcovd"} );
-
+    
     // Escaped UTF-8
     TEST_OBJECT( {"text":"\u3050\u3089\u307e\u3041\u3067\u3061\u3085\u306d\u2665\u304a\u306f\u3088\u3046\u3067\u3059\uff01"} );
 
@@ -408,13 +471,13 @@ int main(int argc, const char **argv) {
     TEST_OBJECT( {"":"bar"} );
 
     // Trailing commas (if permissive mode is enabled)
-    if( !jsonxx::Strict ) {
+    if( Parser != Strict ) {
         TEST_ARRAY( [ true, 42, 54.7, ] );
         TEST_OBJECT( { "hello": "world",} );
     }
 
     // Single-quoted strings (if permissive mode is enabled)
-    if( !jsonxx::Strict ) {
+    if( Parser != Strict ) {
         TEST_OBJECT( { 'single-quoted-strings': 'are "handy"' } );
     }
 
@@ -497,7 +560,7 @@ int main(int argc, const char **argv) {
         o << "number" << 123;
         o << "string" << "hello world";
         o << "boolean" << false;
-        o << "null" << NULL;
+        o << "null" << static_cast<void*>(0);
         o << "array" << a;
         o << "object" << jsonxx::Object("child", "object");
         o << "undefined" << custom_type();
@@ -531,7 +594,7 @@ int main(int argc, const char **argv) {
         TEST( o.size() == 3 );
     }
 
-    if( !jsonxx::Strict )
+    if( Parser != Strict )
     {
         // C++ style comments test
         string teststr(
@@ -545,6 +608,19 @@ int main(int argc, const char **argv) {
        );
         jsonxx::Object o;
         TEST( o.parse(teststr) );
+    }
+
+    if( argc > 1 )
+    {
+        std::ifstream ifs( argv[1] );
+
+        if( ifs.good() ) {
+            std::string read = jsonxx::reformat(ifs);
+            TEST( read.size() );
+            cout << read << endl;
+        } else {
+            cout << "Cant find '" << argv[1] << "'" << endl;
+        }
     }
 
     cout << "All tests ok." << endl;

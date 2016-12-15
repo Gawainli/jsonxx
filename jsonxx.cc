@@ -47,6 +47,7 @@ bool parse_null(std::istream& input);
 bool parse_number(std::istream& input, Number& value);
 bool parse_object(std::istream& input, Object& object);
 bool parse_string(std::istream& input, String& value);
+bool parse_identifier(std::istream& input, String& value);
 bool parse_value(std::istream& input, Value& value);
 
 // Try to consume characters from the input stream and match the
@@ -117,7 +118,7 @@ bool parse_string(std::istream& input, String& value) {
                         std::stringstream ss;
                         for( i = 0; (!input.eof() && input.good()) && i < 4; ++i ) {
                             input.get(ch);
-                            ss << ch;
+                            ss << std::hex << ch;
                         }
                         if( input.good() && (ss >> i) )
                             value.push_back(i);
@@ -141,11 +142,52 @@ bool parse_string(std::istream& input, String& value) {
     }
 }
 
+bool parse_identifier(std::istream& input, String& value) {
+    input >> std::ws;
+
+    char ch = '\0', delimiter = ':';
+    bool first = true;
+
+    while(!input.eof() && input.good()) {
+        input.get(ch);
+
+        if (ch == delimiter) {
+            input.unget();
+            break;
+        }
+
+        if(first) {
+            if ((ch != '_' && ch != '$') &&
+                    (ch < 'a' || ch > 'z') &&
+                    (ch < 'A' || ch > 'Z')) {
+                return false;
+            }
+            first = false;
+        }
+        if(ch == '_' || ch == '$' ||
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9')) {
+            value.push_back(ch);            
+        }
+        else if(ch == '\t' || ch == ' ') {
+            input >> std::ws;
+        }
+    }
+    if (input && ch == delimiter) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 bool parse_number(std::istream& input, Number& value) {
     input >> std::ws;
+    std::streampos rollback = input.tellg();
     input >> value;
     if (input.fail()) {
         input.clear();
+        input.seekg(rollback);
         return false;
     }
     return true;
@@ -183,7 +225,7 @@ bool parse_object(std::istream& input, Object& object) {
 
 bool parse_comment(std::istream &input) {
     if( Parser == Permissive )
-    if( !input.eof() )
+    if( !input.eof() && input.peek() == '/' )
     {
         char ch0(0);
         input.get(ch0);
@@ -239,12 +281,23 @@ bool Object::parse(std::istream& input, Object& object) {
 
     do {
         std::string key;
-        if (!parse_string(input, key)) {
-            if (Parser == Permissive) {
-                if (input.peek() == '}')
-                    break;
+        if(UnquotedKeys == Enabled) {
+            if (!parse_identifier(input, key)) {
+                if (Parser == Permissive) {
+                    if (input.peek() == '}')
+                        break;
+                }
+                return false;
             }
-            return false;
+        }
+        else {
+            if (!parse_string(input, key)) {
+                if (Parser == Permissive) {
+                    if (input.peek() == '}')
+                        break;
+                }
+                return false;
+            }
         }
         if (!match(":", input)) {
             return false;
@@ -333,6 +386,9 @@ bool Array::parse(std::istream& input, Array& array) {
 
     if (!match("[", input)) {
         return false;
+    }
+    if (match("]", input)) {
+        return true;
     }
 
     do {
@@ -503,7 +559,7 @@ namespace json {
         return input;
     }
 
-    std::string tag( unsigned format, unsigned depth, const std::string &name, const jsonxx::Value &t, const std::string &attr = std::string() ) {
+    std::string tag( unsigned format, unsigned depth, const std::string &name, const jsonxx::Value &t) {
         std::stringstream ss;
         const std::string tab(depth, '\t');
 
@@ -557,11 +613,11 @@ std::string escape_attrib( const std::string &input ) {
     if( !once ) {
         for( int i = 0; i < 256; ++i )
             map[ i ] = "_";
-        for( int i = int('a'); i < int('z'); ++i )
+        for( int i = int('a'); i <= int('z'); ++i )
             map[ i ] = std::string() + char(i);
-        for( int i = int('A'); i < int('Z'); ++i )
+        for( int i = int('A'); i <= int('Z'); ++i )
             map[ i ] = std::string() + char(i);
-        for( int i = int('0'); i < int('9'); ++i )
+        for( int i = int('0'); i <= int('9'); ++i )
             map[ i ] = std::string() + char(i);
         once = map;
     }
@@ -782,7 +838,7 @@ std::string Object::json() const {
     v.object_value_ = const_cast<jsonxx::Object*>(this);
     v.type_ = jsonxx::Value::OBJECT_;
 
-    std::string result = tag( jsonxx::JSON, 0, std::string(), v, std::string() );
+    std::string result = tag( jsonxx::JSON, 0, std::string(), v );
 
     v.object_value_ = 0;
     return remove_last_comma( result );
@@ -809,7 +865,7 @@ std::string Array::json() const {
     v.array_value_ = const_cast<jsonxx::Array*>(this);
     v.type_ = jsonxx::Value::ARRAY_;
 
-    std::string result = tag( jsonxx::JSON, 0, std::string(), v, std::string() );
+    std::string result = tag( jsonxx::JSON, 0, std::string(), v );
 
     v.array_value_ = 0;
     return remove_last_comma( result );
@@ -857,6 +913,36 @@ bool validate( std::istream &input ) {
 bool validate( const std::string &input ) {
     std::istringstream is( input );
     return jsonxx::validate( is );
+}
+
+std::string reformat( std::istream &input ) {
+
+    // trim non-printable chars
+    for( char ch(0); !input.eof() && input.peek() <= 32; )
+        input.get(ch);
+
+    // validate json
+    if( input.peek() == '{' )
+    {
+        jsonxx::Object o;
+        if( parse_object( input, o ) )
+            return o.json();
+    }
+    else
+    if( input.peek() == '[' )
+    {
+        jsonxx::Array a;
+        if( parse_array( input, a ) )
+            return a.json();
+    }
+
+    // bad json input
+    return std::string();
+}
+
+std::string reformat( const std::string &input ) {
+    std::istringstream is( input );
+    return jsonxx::reformat( is );
 }
 
 std::string xml( std::istream &input, unsigned format ) {
